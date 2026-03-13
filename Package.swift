@@ -8,7 +8,8 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "CroPDFMacOS"
+            name: "CroPDFMacOS",
+            path: "src"
         ),
     ]
 )
