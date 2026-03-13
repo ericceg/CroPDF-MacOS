@@ -1,7 +1,17 @@
+import AppKit
 import SwiftUI
+
+final class CroPDFAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first?.makeKeyAndOrderFront(nil)
+    }
+}
 
 @main
 struct CroPDFMacOSApp: App {
+    @NSApplicationDelegateAdaptor(CroPDFAppDelegate.self) private var appDelegate
     @StateObject private var model = PDFEditorModel()
 
     var body: some Scene {
@@ -16,7 +26,7 @@ struct CroPDFMacOSApp: App {
                 Button("Open PDF") {
                     model.openPanel()
                 }
-                .keyboardShortcut("o", modifiers: .command)
+                .keyboardShortcut("0", modifiers: .command)
 
                 Button("Crop and Save") {
                     model.exportSelection()

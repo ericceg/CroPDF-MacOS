@@ -39,6 +39,8 @@ final class PDFCanvasContainerView: NSView {
     let pdfView = PDFView()
     private let stageView = NSView()
     let overlayView = SelectionOverlayView()
+    private var keyDownMonitor: Any?
+    private var keyUpMonitor: Any?
 
     var onSelectionChange: ((CGRect?) -> Void)? {
         didSet { overlayView.onSelectionChange = onSelectionChange }
@@ -102,6 +104,7 @@ final class PDFCanvasContainerView: NSView {
             name: .PDFViewPageChanged,
             object: pdfView
         )
+
     }
 
     @available(*, unavailable)
@@ -111,6 +114,16 @@ final class PDFCanvasContainerView: NSView {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+
+        if window == nil {
+            removeEventMonitors()
+        } else {
+            installEventMonitorsIfNeeded()
+        }
     }
 
     func update(document: PDFDocument?, pageIndex: Int, selectionRect: CGRect?) {
@@ -142,6 +155,68 @@ final class PDFCanvasContainerView: NSView {
         let pageIndex = document.index(for: currentPage)
         if pageIndex != NSNotFound {
             onPageChange?(pageIndex)
+        }
+    }
+
+    private func shouldHandleKeyboardEvent(_ event: NSEvent) -> Bool {
+        guard
+            let window,
+            event.window === window,
+            window.attachedSheet == nil
+        else {
+            return false
+        }
+
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
+            return false
+        }
+
+        if window.firstResponder is NSTextView {
+            return false
+        }
+
+        return true
+    }
+
+    private func installEventMonitorsIfNeeded() {
+        if keyDownMonitor == nil {
+            keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self else {
+                    return event
+                }
+
+                guard shouldHandleKeyboardEvent(event) else {
+                    return event
+                }
+
+                return overlayView.handleKeyDownEvent(event) ? nil : event
+            }
+        }
+
+        if keyUpMonitor == nil {
+            keyUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyUp) { [weak self] event in
+                guard let self else {
+                    return event
+                }
+
+                guard shouldHandleKeyboardEvent(event) else {
+                    return event
+                }
+
+                return overlayView.handleKeyUpEvent(event) ? nil : event
+            }
+        }
+    }
+
+    private func removeEventMonitors() {
+        if let keyDownMonitor {
+            NSEvent.removeMonitor(keyDownMonitor)
+            self.keyDownMonitor = nil
+        }
+
+        if let keyUpMonitor {
+            NSEvent.removeMonitor(keyUpMonitor)
+            self.keyUpMonitor = nil
         }
     }
 }
@@ -188,9 +263,18 @@ final class SelectionOverlayView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if handleKeyDownEvent(event) {
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+
+    @discardableResult
+    func handleKeyDownEvent(_ event: NSEvent) -> Bool {
         if event.keyCode == 49 {
             isSpaceHeld = true
-            return
+            return true
         }
 
         if event.keyCode == 53 {
@@ -198,16 +282,15 @@ final class SelectionOverlayView: NSView {
             onClearSelection?()
             onSelectionChange?(nil)
             needsDisplay = true
-            return
+            return true
         }
 
         guard let selectionViewRect = currentSelectionFrame else {
-            handleNavigationKey(event)
-            return
+            return handleNavigationKey(event)
         }
 
         guard let pageFrame = currentPageFrame else {
-            return
+            return false
         }
 
         let delta = isSpaceHeld ? CGFloat(25) : CGFloat(1)
@@ -240,23 +323,32 @@ final class SelectionOverlayView: NSView {
                 rect.origin.y -= delta
             }
         default:
-            super.keyDown(with: event)
-            return
+            return false
         }
 
         rect = clamp(selectionRect: rect.standardized, to: pageFrame)
         selectionRectInPage = convertSelectionToPage(rect)
         onSelectionChange?(selectionRectInPage)
         needsDisplay = true
+        return true
     }
 
     override func keyUp(with event: NSEvent) {
-        if event.keyCode == 49 {
-            isSpaceHeld = false
+        if handleKeyUpEvent(event) {
             return
         }
 
         super.keyUp(with: event)
+    }
+
+    @discardableResult
+    func handleKeyUpEvent(_ event: NSEvent) -> Bool {
+        if event.keyCode == 49 {
+            isSpaceHeld = false
+            return true
+        }
+
+        return false
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -304,14 +396,16 @@ final class SelectionOverlayView: NSView {
         needsDisplay = true
     }
 
-    private func handleNavigationKey(_ event: NSEvent) {
+    private func handleNavigationKey(_ event: NSEvent) -> Bool {
         switch event.keyCode {
         case 123:
             onPageStep?(-1)
+            return true
         case 124:
             onPageStep?(1)
+            return true
         default:
-            super.keyDown(with: event)
+            return false
         }
     }
 
