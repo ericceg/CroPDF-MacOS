@@ -7,9 +7,9 @@ struct InteractivePDFCanvas: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PDFCanvasContainerView {
         let view = PDFCanvasContainerView()
-        view.onSelectionChange = { rect in
+        view.onSelectionChange = { pageIndex, rect in
             Task { @MainActor in
-                model.setSelectionRect(rect)
+                model.setSelectionRect(rect, onPage: pageIndex)
             }
         }
         view.onPageStep = { delta in
@@ -31,20 +31,24 @@ struct InteractivePDFCanvas: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: PDFCanvasContainerView, context: Context) {
-        nsView.update(document: model.document, pageIndex: model.currentPageIndex, selectionRect: model.selectionRect)
+        nsView.update(
+            document: model.document,
+            pageIndex: model.currentPageIndex,
+            selectionRect: model.selectionRect,
+            selectionPageIndex: model.selectionPageIndex
+        )
     }
 }
 
 final class PDFCanvasContainerView: NSView {
     let pdfView = PreviewLikePDFView()
-    private let stageView = NSView()
     let overlayView = SelectionOverlayView()
     private var keyDownMonitor: Any?
     private var keyUpMonitor: Any?
     private var magnifyMonitor: Any?
     private var smartMagnifyMonitor: Any?
 
-    var onSelectionChange: ((CGRect?) -> Void)? {
+    var onSelectionChange: ((Int?, CGRect?) -> Void)? {
         didSet { overlayView.onSelectionChange = onSelectionChange }
     }
 
@@ -64,10 +68,6 @@ final class PDFCanvasContainerView: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.underPageBackgroundColor.cgColor
 
-        stageView.translatesAutoresizingMaskIntoConstraints = false
-        stageView.wantsLayer = true
-        stageView.layer?.backgroundColor = NSColor.underPageBackgroundColor.cgColor
-
         pdfView.translatesAutoresizingMaskIntoConstraints = false
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
@@ -75,35 +75,43 @@ final class PDFCanvasContainerView: NSView {
         pdfView.displaysPageBreaks = true
         pdfView.displayBox = .cropBox
         pdfView.backgroundColor = .underPageBackgroundColor
+        pdfView.isInMarkupMode = true
 
-        overlayView.translatesAutoresizingMaskIntoConstraints = false
         overlayView.pdfView = pdfView
+        overlayView.frame = .zero
+        overlayView.autoresizingMask = [.width, .height]
 
-        addSubview(stageView)
-        stageView.addSubview(pdfView)
-        stageView.addSubview(overlayView)
+        addSubview(pdfView)
 
         NSLayoutConstraint.activate([
-            stageView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stageView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stageView.topAnchor.constraint(equalTo: topAnchor),
-            stageView.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-            pdfView.leadingAnchor.constraint(equalTo: stageView.leadingAnchor),
-            pdfView.trailingAnchor.constraint(equalTo: stageView.trailingAnchor),
-            pdfView.topAnchor.constraint(equalTo: stageView.topAnchor),
-            pdfView.bottomAnchor.constraint(equalTo: stageView.bottomAnchor),
-
-            overlayView.leadingAnchor.constraint(equalTo: stageView.leadingAnchor),
-            overlayView.trailingAnchor.constraint(equalTo: stageView.trailingAnchor),
-            overlayView.topAnchor.constraint(equalTo: stageView.topAnchor),
-            overlayView.bottomAnchor.constraint(equalTo: stageView.bottomAnchor),
+            pdfView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            pdfView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            pdfView.topAnchor.constraint(equalTo: topAnchor),
+            pdfView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handlePDFPageChanged),
             name: .PDFViewPageChanged,
+            object: pdfView
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePDFViewGeometryChanged),
+            name: .PDFViewScaleChanged,
+            object: pdfView
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePDFViewGeometryChanged),
+            name: .PDFViewVisiblePagesChanged,
+            object: pdfView
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePDFViewGeometryChanged),
+            name: .PDFViewDisplayBoxChanged,
             object: pdfView
         )
 
@@ -125,13 +133,20 @@ final class PDFCanvasContainerView: NSView {
             removeEventMonitors()
         } else {
             installEventMonitorsIfNeeded()
+            attachOverlayIfNeeded()
         }
     }
 
-    func update(document: PDFDocument?, pageIndex: Int, selectionRect: CGRect?) {
+    override func layout() {
+        super.layout()
+        attachOverlayIfNeeded()
+    }
+
+    func update(document: PDFDocument?, pageIndex: Int, selectionRect: CGRect?, selectionPageIndex: Int?) {
         if pdfView.document !== document {
             pdfView.document = document
             pdfView.refreshZoomBounds()
+            attachOverlayIfNeeded()
         }
 
         if
@@ -142,12 +157,15 @@ final class PDFCanvasContainerView: NSView {
             pdfView.go(to: page)
         }
 
-        overlayView.sync(selectionRect: selectionRect)
+        attachOverlayIfNeeded()
+        overlayView.sync(selectionRect: selectionRect, pageIndex: selectionPageIndex)
         overlayView.needsDisplay = true
     }
 
     @objc
     private func handlePDFPageChanged() {
+        overlayView.needsDisplay = true
+
         guard
             let document = pdfView.document,
             let currentPage = pdfView.currentPage
@@ -159,6 +177,12 @@ final class PDFCanvasContainerView: NSView {
         if pageIndex != NSNotFound {
             onPageChange?(pageIndex)
         }
+    }
+
+    @objc
+    private func handlePDFViewGeometryChanged() {
+        attachOverlayIfNeeded()
+        overlayView.needsDisplay = true
     }
 
     private func shouldHandleKeyboardEvent(_ event: NSEvent) -> Bool {
@@ -277,16 +301,33 @@ final class PDFCanvasContainerView: NSView {
             self.smartMagnifyMonitor = nil
         }
     }
+
+    private func attachOverlayIfNeeded() {
+        guard let documentView = pdfView.documentView else {
+            overlayView.removeFromSuperview()
+            return
+        }
+
+        if overlayView.superview !== documentView {
+            overlayView.removeFromSuperview()
+            overlayView.frame = documentView.bounds
+            documentView.addSubview(overlayView)
+        } else if overlayView.frame.size != documentView.bounds.size {
+            overlayView.frame = documentView.bounds
+        }
+    }
 }
 
 final class PreviewLikePDFView: PDFView {
     private let minimumZoomRatio: CGFloat = 0.1
     private var pinchAnchorPage: PDFPage?
     private var pinchAnchorPointOnPage: CGPoint?
+    private var isAdjustingScrollBounds = false
 
     override func layout() {
         super.layout()
         refreshZoomBounds()
+        enforceCropBoxScrollBounds()
     }
 
     override func magnify(with event: NSEvent) {
@@ -299,12 +340,19 @@ final class PreviewLikePDFView: PDFView {
 
         super.magnify(with: event)
         clampScaleFactor()
+        enforceCropBoxScrollBounds()
     }
 
     override func smartMagnify(with event: NSEvent) {
         refreshZoomBounds()
         super.smartMagnify(with: event)
         clampScaleFactor()
+        enforceCropBoxScrollBounds()
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        super.scrollWheel(with: event)
+        enforceCropBoxScrollBounds()
     }
 
     func refreshZoomBounds() {
@@ -322,10 +370,12 @@ final class PreviewLikePDFView: PDFView {
 
         if autoScales {
             scaleFactor = fitScale
+            enforceCropBoxScrollBounds()
             return
         }
 
         clampScaleFactor()
+        enforceCropBoxScrollBounds()
     }
 
     func handleMagnifyEvent(_ event: NSEvent, in sourceView: NSView) {
@@ -363,10 +413,12 @@ final class PreviewLikePDFView: PDFView {
 
             scaleFactor = targetScale
             alignPinchAnchor(to: locationInView)
+            enforceCropBoxScrollBounds()
 
         case .ended, .cancelled:
             pinchAnchorPage = nil
             pinchAnchorPointOnPage = nil
+            enforceCropBoxScrollBounds()
 
         default:
             break
@@ -406,25 +458,125 @@ final class PreviewLikePDFView: PDFView {
         clipView.scroll(to: constrainedBounds.origin)
         documentView.enclosingScrollView?.reflectScrolledClipView(clipView)
     }
+
+    private func enforceCropBoxScrollBounds() {
+        guard
+            !isAdjustingScrollBounds,
+            let document,
+            let documentView,
+            let clipView = documentView.enclosingScrollView?.contentView,
+            let currentPage
+        else {
+            return
+        }
+
+        let verticalContentBounds = document.pageContentBounds(
+            for: displayBox,
+            in: self,
+            documentView: documentView
+        )
+        let horizontalContentBounds = currentPage.contentBounds(
+            for: displayBox,
+            in: self,
+            documentView: documentView
+        )
+
+        guard !verticalContentBounds.isNull, !horizontalContentBounds.isNull else {
+            return
+        }
+
+        let clipBounds = clipView.bounds
+        let nextOrigin = CGPoint(
+            x: constrainedOrigin(
+                current: clipBounds.origin.x,
+                visibleLength: clipBounds.width,
+                contentMin: horizontalContentBounds.minX,
+                contentMax: horizontalContentBounds.maxX
+            ),
+            y: constrainedOrigin(
+                current: clipBounds.origin.y,
+                visibleLength: clipBounds.height,
+                contentMin: verticalContentBounds.minY,
+                contentMax: verticalContentBounds.maxY
+            )
+        )
+
+        guard nextOrigin != clipBounds.origin else {
+            return
+        }
+
+        isAdjustingScrollBounds = true
+        clipView.scroll(to: nextOrigin)
+        documentView.enclosingScrollView?.reflectScrolledClipView(clipView)
+        isAdjustingScrollBounds = false
+    }
+
+    private func constrainedOrigin(
+        current: CGFloat,
+        visibleLength: CGFloat,
+        contentMin: CGFloat,
+        contentMax: CGFloat
+    ) -> CGFloat {
+        let contentLength = contentMax - contentMin
+
+        if contentLength <= visibleLength {
+            return contentMin - ((visibleLength - contentLength) * 0.5)
+        }
+
+        let lowerBound = contentMin
+        let upperBound = contentMax - visibleLength
+        return min(max(current, lowerBound), upperBound)
+    }
+}
+
+@MainActor
+private extension PDFPage {
+    func contentBounds(for displayBox: PDFDisplayBox, in pdfView: PDFView, documentView: NSView) -> CGRect {
+        let boundsInPDFView = pdfView.convert(bounds(for: displayBox), from: self)
+        return documentView.convert(boundsInPDFView, from: pdfView).standardized
+    }
+}
+
+@MainActor
+private extension PDFDocument {
+    func pageContentBounds(for displayBox: PDFDisplayBox, in pdfView: PDFView, documentView: NSView) -> CGRect {
+        var aggregateBounds = CGRect.null
+
+        for pageIndex in 0..<pageCount {
+            guard let page = page(at: pageIndex) else {
+                continue
+            }
+
+            aggregateBounds = aggregateBounds.union(
+                page.contentBounds(for: displayBox, in: pdfView, documentView: documentView)
+            )
+        }
+
+        return aggregateBounds.standardized
+    }
 }
 
 final class SelectionOverlayView: NSView {
     weak var pdfView: PDFView?
-    var onSelectionChange: ((CGRect?) -> Void)?
+    var onSelectionChange: ((Int?, CGRect?) -> Void)?
     var onPageStep: ((Int) -> Void)?
     var onClearSelection: (() -> Void)?
 
     private var selectionRectInPage: CGRect?
+    private var selectionPageIndex: Int?
     private var dragAnchor: CGPoint?
     private var isSpaceHeld = false
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { true }
 
-    func sync(selectionRect: CGRect?) {
+    func sync(selectionRect: CGRect?, pageIndex: Int?) {
         let standardized = selectionRect?.standardized
         if selectionRectInPage != standardized {
             selectionRectInPage = standardized
+        }
+        if selectionPageIndex != pageIndex {
+            selectionPageIndex = pageIndex
         }
     }
 
@@ -437,7 +589,8 @@ final class SelectionOverlayView: NSView {
 
         dragAnchor = clamp(point: convert(event.locationInWindow, from: nil), to: pageFrame)
         selectionRectInPage = nil
-        onSelectionChange?(nil)
+        selectionPageIndex = nil
+        onSelectionChange?(nil, nil)
         needsDisplay = true
     }
 
@@ -447,6 +600,10 @@ final class SelectionOverlayView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         updateSelection(with: event, finalize: true)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        nextResponder?.scrollWheel(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -466,8 +623,9 @@ final class SelectionOverlayView: NSView {
 
         if event.keyCode == 53 {
             selectionRectInPage = nil
+            selectionPageIndex = nil
             onClearSelection?()
-            onSelectionChange?(nil)
+            onSelectionChange?(nil, nil)
             needsDisplay = true
             return true
         }
@@ -515,7 +673,8 @@ final class SelectionOverlayView: NSView {
 
         rect = clamp(selectionRect: rect.standardized, to: pageFrame)
         selectionRectInPage = convertSelectionToPage(rect)
-        onSelectionChange?(selectionRectInPage)
+        selectionPageIndex = editableSelectionPage?.pageIndex(in: pdfView?.document)
+        onSelectionChange?(selectionPageIndex, selectionRectInPage)
         needsDisplay = true
         return true
     }
@@ -570,10 +729,12 @@ final class SelectionOverlayView: NSView {
 
         if finalize, (rect.width < 3 || rect.height < 3) {
             selectionRectInPage = nil
-            onSelectionChange?(nil)
+            selectionPageIndex = nil
+            onSelectionChange?(nil, nil)
         } else {
             selectionRectInPage = convertSelectionToPage(rect)
-            onSelectionChange?(selectionRectInPage)
+            selectionPageIndex = editableSelectionPage?.pageIndex(in: pdfView?.document)
+            onSelectionChange?(selectionPageIndex, selectionRectInPage)
         }
 
         if finalize {
@@ -597,36 +758,43 @@ final class SelectionOverlayView: NSView {
     }
 
     private var currentPageFrame: CGRect? {
-        guard let pdfView, let page = pdfView.currentPage else {
+        guard
+            let pdfView,
+            let page = interactionPage,
+            let documentView = pdfView.documentView
+        else {
             return nil
         }
 
-        let pageBounds = page.bounds(for: pdfView.displayBox)
-        let inPDFView = pdfView.convert(pageBounds, from: page)
-        let frame = convert(inPDFView, from: pdfView).standardized
+        let frame = convertPageRect(page.bounds(for: pdfView.displayBox), on: page, via: documentView)
         return frame.isNull ? nil : frame
     }
 
     private var currentSelectionFrame: CGRect? {
         guard
             let pdfView,
-            let page = pdfView.currentPage,
-            let selectionRectInPage
+            let page = selectionPage(),
+            let selectionRectInPage,
+            let documentView = pdfView.documentView
         else {
             return nil
         }
 
-        let inPDFView = pdfView.convert(selectionRectInPage, from: page)
-        let frame = convert(inPDFView, from: pdfView).standardized
+        let frame = convertPageRect(selectionRectInPage, on: page, via: documentView)
         return frame.isNull ? nil : frame
     }
 
     private func convertSelectionToPage(_ rect: CGRect) -> CGRect? {
-        guard let pdfView, let page = pdfView.currentPage else {
+        guard
+            let pdfView,
+            let page = editableSelectionPage,
+            let documentView = pdfView.documentView
+        else {
             return nil
         }
 
-        let inPDFView = convert(rect, to: pdfView)
+        let inDocumentView = documentView.convert(rect, from: self)
+        let inPDFView = pdfView.convert(inDocumentView, from: documentView)
         let inPage = pdfView.convert(inPDFView, to: page).standardized
         let pageBounds = page.bounds(for: pdfView.displayBox)
         let clipped = inPage.intersection(pageBounds)
@@ -634,6 +802,38 @@ final class SelectionOverlayView: NSView {
             return nil
         }
         return clipped
+    }
+
+    private var interactionPage: PDFPage? {
+        pdfView?.currentPage
+    }
+
+    private var editableSelectionPage: PDFPage? {
+        selectionPage() ?? interactionPage
+    }
+
+    private func selectionPage() -> PDFPage? {
+        guard
+            let pdfView,
+            let document = pdfView.document,
+            let selectionPageIndex,
+            selectionPageIndex >= 0,
+            selectionPageIndex < document.pageCount
+        else {
+            return nil
+        }
+
+        return document.page(at: selectionPageIndex)
+    }
+
+    private func convertPageRect(_ rect: CGRect, on page: PDFPage, via documentView: NSView) -> CGRect {
+        guard let pdfView else {
+            return .null
+        }
+
+        let inPDFView = pdfView.convert(rect, from: page)
+        let inDocumentView = documentView.convert(inPDFView, from: pdfView)
+        return convert(inDocumentView, from: documentView).standardized
     }
 
     private func clamp(point: CGPoint, to rect: CGRect) -> CGPoint {
@@ -652,5 +852,16 @@ final class SelectionOverlayView: NSView {
         rect.origin.y = min(max(rect.origin.y, pageFrame.minY), pageFrame.maxY - rect.height)
 
         return rect
+    }
+}
+
+private extension PDFPage {
+    func pageIndex(in document: PDFDocument?) -> Int? {
+        guard let document else {
+            return nil
+        }
+
+        let index = document.index(for: self)
+        return index == NSNotFound ? nil : index
     }
 }
