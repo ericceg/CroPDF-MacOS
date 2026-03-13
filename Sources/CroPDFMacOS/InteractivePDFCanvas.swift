@@ -280,6 +280,7 @@ final class PDFCanvasContainerView: NSView {
 }
 
 final class PreviewLikePDFView: PDFView {
+    private let minimumZoomRatio: CGFloat = 0.1
     private var pinchAnchorPage: PDFPage?
     private var pinchAnchorPointOnPage: CGPoint?
 
@@ -293,7 +294,7 @@ final class PreviewLikePDFView: PDFView {
 
         if autoScales {
             autoScales = false
-            scaleFactor = minScaleFactor
+            scaleFactor = scaleFactorForSizeToFit
         }
 
         super.magnify(with: event)
@@ -316,7 +317,7 @@ final class PreviewLikePDFView: PDFView {
             return
         }
 
-        minScaleFactor = fitScale
+        minScaleFactor = fitScale * minimumZoomRatio
         maxScaleFactor = max(fitScale * 8, fitScale + 4)
 
         if autoScales {
@@ -341,7 +342,7 @@ final class PreviewLikePDFView: PDFView {
         case .began:
             if autoScales {
                 autoScales = false
-                scaleFactor = minScaleFactor
+                scaleFactor = scaleFactorForSizeToFit
             }
 
             if let page = page(for: locationInView, nearest: true) {
@@ -398,12 +399,11 @@ final class PreviewLikePDFView: PDFView {
         nextOrigin.x += anchorInDocument.x - targetInDocument.x
         nextOrigin.y += anchorInDocument.y - targetInDocument.y
 
-        let maxX = max(0, documentView.bounds.width - clipView.bounds.width)
-        let maxY = max(0, documentView.bounds.height - clipView.bounds.height)
-        nextOrigin.x = min(max(nextOrigin.x, 0), maxX)
-        nextOrigin.y = min(max(nextOrigin.y, 0), maxY)
+        let constrainedBounds = clipView.constrainBoundsRect(
+            NSRect(origin: nextOrigin, size: clipView.bounds.size)
+        )
 
-        clipView.scroll(to: nextOrigin)
+        clipView.scroll(to: constrainedBounds.origin)
         documentView.enclosingScrollView?.reflectScrolledClipView(clipView)
     }
 }
