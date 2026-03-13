@@ -3,7 +3,15 @@ import PDFKit
 import SwiftUI
 
 struct ContentView: View {
+    private enum SidebarMode: String, CaseIterable, Identifiable {
+        case contents = "Contents"
+        case pages = "Pages"
+
+        var id: String { rawValue }
+    }
+
     @ObservedObject var model: PDFEditorModel
+    @State private var sidebarMode: SidebarMode = .contents
 
     var body: some View {
         ZStack {
@@ -120,8 +128,8 @@ struct ContentView: View {
 
     private var workspace: some View {
         HStack(spacing: 0) {
-            ThumbnailSidebarView(model: model)
-                .frame(width: 168)
+            navigationSidebar
+                .frame(width: 240)
 
             Divider()
 
@@ -129,6 +137,29 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color(nsColor: .underPageBackgroundColor))
+    }
+
+    private var navigationSidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Picker("Navigation", selection: $sidebarMode) {
+                ForEach(SidebarMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(12)
+
+            Group {
+                switch sidebarMode {
+                case .contents:
+                    TableOfContentsSidebarView(model: model)
+                case .pages:
+                    ThumbnailSidebarView(model: model)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private var statusBar: some View {
@@ -147,6 +178,205 @@ struct ContentView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(.bar)
+    }
+}
+
+private struct TableOfContentsSidebarView: View {
+    @ObservedObject var model: PDFEditorModel
+    @State private var expandedItemIDs: Set<String> = []
+    @State private var manuallySelectedItemID: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if model.hasTableOfContents {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 4) {
+                            ForEach(model.tableOfContentsItems) { item in
+                                TableOfContentsNodeView(
+                                    item: item,
+                                    selectedItemID: selectedTableOfContentsItem?.id,
+                                    expandedItemIDs: $expandedItemIDs,
+                                    onSelect: { selectedItem in
+                                        manuallySelectedItemID = selectedItem.id
+                                        model.setCurrentPageIndex(selectedItem.pageIndex)
+                                    }
+                                )
+                            }
+                        }
+                    .padding(8)
+                }
+                .onAppear {
+                    syncManualSelectionForCurrentPage()
+                    syncExpandedStateForCurrentPage()
+                }
+                .onChange(of: model.currentPageIndex) { _, _ in
+                    syncManualSelectionForCurrentPage()
+                    syncExpandedStateForCurrentPage()
+                }
+            } else {
+                ContentUnavailableView(
+                    "No Table of Contents",
+                    systemImage: "list.bullet.rectangle",
+                    description: Text("This PDF does not include outline entries.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(12)
+            }
+        }
+    }
+
+    private var selectedTableOfContentsItem: PDFEditorModel.TableOfContentsItem? {
+        if
+            let manuallySelectedItemID,
+            let manuallySelectedItem = item(withID: manuallySelectedItemID, in: model.tableOfContentsItems),
+            manuallySelectedItem.pageIndex == model.currentPageIndex
+        {
+            return manuallySelectedItem
+        }
+
+        return deepestMatchingItem(in: model.tableOfContentsItems)
+    }
+
+    private func item(withID id: String, in items: [PDFEditorModel.TableOfContentsItem]) -> PDFEditorModel.TableOfContentsItem? {
+        for candidate in items {
+            if candidate.id == id {
+                return candidate
+            }
+
+            if let child = item(withID: id, in: candidate.children) {
+                return child
+            }
+        }
+
+        return nil
+    }
+
+    private func deepestMatchingItem(in items: [PDFEditorModel.TableOfContentsItem]) -> PDFEditorModel.TableOfContentsItem? {
+        var candidate: PDFEditorModel.TableOfContentsItem?
+
+        for item in items where item.pageIndex <= model.currentPageIndex {
+            candidate = item
+
+            if let deeper = deepestMatchingItem(in: item.children) {
+                candidate = deeper
+            }
+        }
+
+        return candidate
+    }
+
+    private func syncExpandedStateForCurrentPage() {
+        guard let selectedItem = selectedTableOfContentsItem else {
+            return
+        }
+
+        expandedItemIDs.formUnion(ancestorIDs(for: selectedItem.id))
+    }
+
+    private func syncManualSelectionForCurrentPage() {
+        guard
+            let manuallySelectedItemID,
+            let manuallySelectedItem = item(withID: manuallySelectedItemID, in: model.tableOfContentsItems)
+        else {
+            return
+        }
+
+        if manuallySelectedItem.pageIndex != model.currentPageIndex {
+            self.manuallySelectedItemID = nil
+        }
+    }
+
+    private func ancestorIDs(for id: String) -> [String] {
+        let components = id.split(separator: ".").map(String.init)
+        guard components.count > 1 else {
+            return []
+        }
+
+        return (1..<components.count).map { components.prefix($0).joined(separator: ".") }
+    }
+}
+
+private struct TableOfContentsNodeView: View {
+    let item: PDFEditorModel.TableOfContentsItem
+    let selectedItemID: String?
+    @Binding var expandedItemIDs: Set<String>
+    let onSelect: (PDFEditorModel.TableOfContentsItem) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                if hasChildren {
+                    Button {
+                        toggleExpanded()
+                    } label: {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 12, height: 12)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Color.clear
+                        .frame(width: 12, height: 12)
+                }
+
+                Text(item.title)
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? Color.white : Color.black)
+                    .lineLimit(2)
+
+                Spacer(minLength: 8)
+
+                Text("\(item.pageIndex + 1)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.9) : Color.black.opacity(0.6))
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onSelect(item)
+            }
+            .padding(.leading, 10)
+            .padding(.trailing, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.85) : Color.clear)
+            )
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(item.children) { child in
+                        TableOfContentsNodeView(
+                            item: child,
+                            selectedItemID: selectedItemID,
+                            expandedItemIDs: $expandedItemIDs,
+                            onSelect: onSelect
+                        )
+                    }
+                }
+                .padding(.leading, 14)
+            }
+        }
+    }
+
+    private var hasChildren: Bool {
+        !item.children.isEmpty
+    }
+
+    private var isExpanded: Bool {
+        expandedItemIDs.contains(item.id)
+    }
+
+    private var isSelected: Bool {
+        item.id == selectedItemID
+    }
+
+    private func toggleExpanded() {
+        if isExpanded {
+            expandedItemIDs.remove(item.id)
+        } else {
+            expandedItemIDs.insert(item.id)
+        }
     }
 }
 
@@ -169,7 +399,6 @@ private struct ThumbnailSidebarView: View {
             }
             .padding(12)
         }
-        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private func thumbnail(for index: Int) -> NSImage {

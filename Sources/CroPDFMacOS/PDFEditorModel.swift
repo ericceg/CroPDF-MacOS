@@ -3,11 +3,19 @@ import PDFKit
 
 @MainActor
 final class PDFEditorModel: ObservableObject {
+    struct TableOfContentsItem: Identifiable, Hashable {
+        let id: String
+        let title: String
+        let pageIndex: Int
+        let children: [TableOfContentsItem]
+    }
+
     @Published private(set) var document: PDFDocument?
     @Published private(set) var currentFileURL: URL?
     @Published private(set) var currentPageIndex = 0
     @Published private(set) var selectionRect: CGRect?
     @Published private(set) var selectionPageIndex: Int?
+    @Published private(set) var tableOfContentsItems: [TableOfContentsItem] = []
     @Published var isShowingPageJumpSheet = false
     @Published var pageJumpInput = ""
     @Published private(set) var errorMessage: String?
@@ -37,6 +45,10 @@ final class PDFEditorModel: ObservableObject {
 
     var canExport: Bool {
         document != nil && selectionRect != nil && selectionPageIndex != nil
+    }
+
+    var hasTableOfContents: Bool {
+        !tableOfContentsItems.isEmpty
     }
 
     var fileDisplayName: String {
@@ -109,6 +121,7 @@ final class PDFEditorModel: ObservableObject {
         currentFileURL = url
         selectionRect = nil
         selectionPageIndex = nil
+        tableOfContentsItems = Self.buildTableOfContents(for: document)
 
         let targetPage = max(0, min((preferredPage ?? 1) - 1, max(document.pageCount - 1, 0)))
         currentPageIndex = targetPage
@@ -217,6 +230,65 @@ final class PDFEditorModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private static func buildTableOfContents(for document: PDFDocument) -> [TableOfContentsItem] {
+        guard let root = document.outlineRoot else {
+            return []
+        }
+
+        return outlineChildren(of: root, in: document, path: [])
+    }
+
+    private static func outlineChildren(
+        of node: PDFOutline,
+        in document: PDFDocument,
+        path: [Int]
+    ) -> [TableOfContentsItem] {
+        guard node.numberOfChildren > 0 else {
+            return []
+        }
+
+        var items: [TableOfContentsItem] = []
+
+        for childIndex in 0..<node.numberOfChildren {
+            guard let child = node.child(at: childIndex) else {
+                continue
+            }
+
+            let childPath = path + [childIndex]
+            let children = outlineChildren(of: child, in: document, path: childPath)
+            let resolvedPageIndex = resolvedPageIndex(for: child, in: document) ?? children.first?.pageIndex
+
+            if
+                let title = child.label?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !title.isEmpty,
+                let pageIndex = resolvedPageIndex
+            {
+                items.append(
+                    TableOfContentsItem(
+                        id: childPath.map(String.init).joined(separator: "."),
+                        title: title,
+                        pageIndex: pageIndex,
+                        children: children
+                    )
+                )
+            }
+        }
+
+        return items
+    }
+
+    private static func resolvedPageIndex(for outline: PDFOutline, in document: PDFDocument) -> Int? {
+        guard
+            let destination = outline.destination,
+            let page = destination.page
+        else {
+            return nil
+        }
+
+        let pageIndex = document.index(for: page)
+        return pageIndex == NSNotFound ? nil : pageIndex
     }
 }
 
