@@ -36,11 +36,13 @@ struct InteractivePDFCanvas: NSViewRepresentable {
 }
 
 final class PDFCanvasContainerView: NSView {
-    let pdfView = PDFView()
+    let pdfView = PreviewLikePDFView()
     private let stageView = NSView()
     let overlayView = SelectionOverlayView()
     private var keyDownMonitor: Any?
     private var keyUpMonitor: Any?
+    private var magnifyMonitor: Any?
+    private var smartMagnifyMonitor: Any?
 
     var onSelectionChange: ((CGRect?) -> Void)? {
         didSet { overlayView.onSelectionChange = onSelectionChange }
@@ -129,6 +131,7 @@ final class PDFCanvasContainerView: NSView {
     func update(document: PDFDocument?, pageIndex: Int, selectionRect: CGRect?) {
         if pdfView.document !== document {
             pdfView.document = document
+            pdfView.refreshZoomBounds()
         }
 
         if
@@ -178,6 +181,19 @@ final class PDFCanvasContainerView: NSView {
         return true
     }
 
+    private func shouldHandleGestureEvent(_ event: NSEvent) -> Bool {
+        guard
+            let window,
+            event.window === window,
+            window.attachedSheet == nil
+        else {
+            return false
+        }
+
+        let locationInView = convert(event.locationInWindow, from: nil)
+        return bounds.contains(locationInView)
+    }
+
     private func installEventMonitorsIfNeeded() {
         if keyDownMonitor == nil {
             keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -206,6 +222,38 @@ final class PDFCanvasContainerView: NSView {
                 return overlayView.handleKeyUpEvent(event) ? nil : event
             }
         }
+
+        if magnifyMonitor == nil {
+            magnifyMonitor = NSEvent.addLocalMonitorForEvents(matching: .magnify) { [weak self] event in
+                guard let self else {
+                    return event
+                }
+
+                guard shouldHandleGestureEvent(event) else {
+                    return event
+                }
+
+                pdfView.handleMagnifyEvent(event, in: self)
+                overlayView.needsDisplay = true
+                return nil
+            }
+        }
+
+        if smartMagnifyMonitor == nil {
+            smartMagnifyMonitor = NSEvent.addLocalMonitorForEvents(matching: .smartMagnify) { [weak self] event in
+                guard let self else {
+                    return event
+                }
+
+                guard shouldHandleGestureEvent(event) else {
+                    return event
+                }
+
+                pdfView.smartMagnify(with: event)
+                overlayView.needsDisplay = true
+                return nil
+            }
+        }
     }
 
     private func removeEventMonitors() {
@@ -218,6 +266,145 @@ final class PDFCanvasContainerView: NSView {
             NSEvent.removeMonitor(keyUpMonitor)
             self.keyUpMonitor = nil
         }
+
+        if let magnifyMonitor {
+            NSEvent.removeMonitor(magnifyMonitor)
+            self.magnifyMonitor = nil
+        }
+
+        if let smartMagnifyMonitor {
+            NSEvent.removeMonitor(smartMagnifyMonitor)
+            self.smartMagnifyMonitor = nil
+        }
+    }
+}
+
+final class PreviewLikePDFView: PDFView {
+    private var pinchAnchorPage: PDFPage?
+    private var pinchAnchorPointOnPage: CGPoint?
+
+    override func layout() {
+        super.layout()
+        refreshZoomBounds()
+    }
+
+    override func magnify(with event: NSEvent) {
+        refreshZoomBounds()
+
+        if autoScales {
+            autoScales = false
+            scaleFactor = minScaleFactor
+        }
+
+        super.magnify(with: event)
+        clampScaleFactor()
+    }
+
+    override func smartMagnify(with event: NSEvent) {
+        refreshZoomBounds()
+        super.smartMagnify(with: event)
+        clampScaleFactor()
+    }
+
+    func refreshZoomBounds() {
+        guard document != nil else {
+            return
+        }
+
+        let fitScale = scaleFactorForSizeToFit
+        guard fitScale.isFinite, fitScale > 0 else {
+            return
+        }
+
+        minScaleFactor = fitScale
+        maxScaleFactor = max(fitScale * 8, fitScale + 4)
+
+        if autoScales {
+            scaleFactor = fitScale
+            return
+        }
+
+        clampScaleFactor()
+    }
+
+    func handleMagnifyEvent(_ event: NSEvent, in sourceView: NSView) {
+        guard document != nil else {
+            return
+        }
+
+        refreshZoomBounds()
+
+        let locationInSourceView = sourceView.convert(event.locationInWindow, from: nil)
+        let locationInView = convert(locationInSourceView, from: sourceView)
+
+        switch event.phase {
+        case .began:
+            if autoScales {
+                autoScales = false
+                scaleFactor = minScaleFactor
+            }
+
+            if let page = page(for: locationInView, nearest: true) {
+                pinchAnchorPage = page
+                pinchAnchorPointOnPage = convert(locationInView, to: page)
+            } else {
+                pinchAnchorPage = nil
+                pinchAnchorPointOnPage = nil
+            }
+
+            fallthrough
+
+        case .changed:
+            let targetScale = min(
+                max(scaleFactor * (1 + event.magnification), minScaleFactor),
+                maxScaleFactor
+            )
+
+            scaleFactor = targetScale
+            alignPinchAnchor(to: locationInView)
+
+        case .ended, .cancelled:
+            pinchAnchorPage = nil
+            pinchAnchorPointOnPage = nil
+
+        default:
+            break
+        }
+    }
+
+    private func clampScaleFactor() {
+        guard scaleFactor.isFinite else {
+            return
+        }
+
+        scaleFactor = min(max(scaleFactor, minScaleFactor), maxScaleFactor)
+    }
+
+    private func alignPinchAnchor(to locationInView: CGPoint) {
+        guard
+            let pinchAnchorPage,
+            let pinchAnchorPointOnPage,
+            let documentView,
+            let clipView = documentView.enclosingScrollView?.contentView
+        else {
+            return
+        }
+
+        let anchorInView = convert(pinchAnchorPointOnPage, from: pinchAnchorPage)
+        let anchorInDocument = documentView.convert(anchorInView, from: self)
+        let targetInDocument = documentView.convert(locationInView, from: self)
+        var nextOrigin = clipView.bounds.origin
+
+        nextOrigin.x += anchorInDocument.x - targetInDocument.x
+        nextOrigin.y += anchorInDocument.y - targetInDocument.y
+
+        let maxX = max(0, documentView.bounds.width - clipView.bounds.width)
+        let maxY = max(0, documentView.bounds.height - clipView.bounds.height)
+        nextOrigin.x = min(max(nextOrigin.x, 0), maxX)
+        nextOrigin.y = min(max(nextOrigin.y, 0), maxY)
+
+        clipView.scroll(to: nextOrigin)
+        documentView.enclosingScrollView?.reflectScrolledClipView(clipView)
     }
 }
 
