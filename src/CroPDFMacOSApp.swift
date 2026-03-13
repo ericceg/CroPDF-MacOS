@@ -21,12 +21,17 @@ struct CroPDFMacOSApp: App {
         }
         .defaultSize(width: 1240, height: 860)
         .commands {
-            CommandGroup(replacing: .newItem) { }
+            CommandGroup(replacing: .newItem) {
+                Button("Open PDF") {
+                    model.openPanel()
+                }
+                .keyboardShortcut("o", modifiers: .command)
+            }
             CommandMenu("CroPDF") {
                 Button("Open PDF") {
                     model.openPanel()
                 }
-                .keyboardShortcut("0", modifiers: .command)
+                .keyboardShortcut("o", modifiers: .command)
 
                 Button("Crop and Save") {
                     model.exportSelection()
