@@ -184,29 +184,33 @@ struct ContentView: View {
 private struct TableOfContentsSidebarView: View {
     @ObservedObject var model: PDFEditorModel
     @State private var expandedItemIDs: Set<String> = []
+    @State private var manuallySelectedItemID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if model.hasTableOfContents {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 4) {
-                        ForEach(model.tableOfContentsItems) { item in
-                            TableOfContentsNodeView(
-                                item: item,
-                                currentPageIndex: model.currentPageIndex,
-                                expandedItemIDs: $expandedItemIDs,
-                                onSelect: { pageIndex in
-                                    model.setCurrentPageIndex(pageIndex)
-                                }
-                            )
+                            ForEach(model.tableOfContentsItems) { item in
+                                TableOfContentsNodeView(
+                                    item: item,
+                                    selectedItemID: selectedTableOfContentsItem?.id,
+                                    expandedItemIDs: $expandedItemIDs,
+                                    onSelect: { selectedItem in
+                                        manuallySelectedItemID = selectedItem.id
+                                        model.setCurrentPageIndex(selectedItem.pageIndex)
+                                    }
+                                )
+                            }
                         }
-                    }
                     .padding(8)
                 }
                 .onAppear {
+                    syncManualSelectionForCurrentPage()
                     syncExpandedStateForCurrentPage()
                 }
                 .onChange(of: model.currentPageIndex) { _, _ in
+                    syncManualSelectionForCurrentPage()
                     syncExpandedStateForCurrentPage()
                 }
             } else {
@@ -222,7 +226,29 @@ private struct TableOfContentsSidebarView: View {
     }
 
     private var selectedTableOfContentsItem: PDFEditorModel.TableOfContentsItem? {
-        deepestMatchingItem(in: model.tableOfContentsItems)
+        if
+            let manuallySelectedItemID,
+            let manuallySelectedItem = item(withID: manuallySelectedItemID, in: model.tableOfContentsItems),
+            manuallySelectedItem.pageIndex == model.currentPageIndex
+        {
+            return manuallySelectedItem
+        }
+
+        return deepestMatchingItem(in: model.tableOfContentsItems)
+    }
+
+    private func item(withID id: String, in items: [PDFEditorModel.TableOfContentsItem]) -> PDFEditorModel.TableOfContentsItem? {
+        for candidate in items {
+            if candidate.id == id {
+                return candidate
+            }
+
+            if let child = item(withID: id, in: candidate.children) {
+                return child
+            }
+        }
+
+        return nil
     }
 
     private func deepestMatchingItem(in items: [PDFEditorModel.TableOfContentsItem]) -> PDFEditorModel.TableOfContentsItem? {
@@ -247,6 +273,19 @@ private struct TableOfContentsSidebarView: View {
         expandedItemIDs.formUnion(ancestorIDs(for: selectedItem.id))
     }
 
+    private func syncManualSelectionForCurrentPage() {
+        guard
+            let manuallySelectedItemID,
+            let manuallySelectedItem = item(withID: manuallySelectedItemID, in: model.tableOfContentsItems)
+        else {
+            return
+        }
+
+        if manuallySelectedItem.pageIndex != model.currentPageIndex {
+            self.manuallySelectedItemID = nil
+        }
+    }
+
     private func ancestorIDs(for id: String) -> [String] {
         let components = id.split(separator: ".").map(String.init)
         guard components.count > 1 else {
@@ -259,9 +298,9 @@ private struct TableOfContentsSidebarView: View {
 
 private struct TableOfContentsNodeView: View {
     let item: PDFEditorModel.TableOfContentsItem
-    let currentPageIndex: Int
+    let selectedItemID: String?
     @Binding var expandedItemIDs: Set<String>
-    let onSelect: (Int) -> Void
+    let onSelect: (PDFEditorModel.TableOfContentsItem) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -283,29 +322,33 @@ private struct TableOfContentsNodeView: View {
 
                 Text(item.title)
                     .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isSelected ? Color.white : Color.black)
                     .lineLimit(2)
 
                 Spacer(minLength: 8)
 
                 Text("\(item.pageIndex + 1)")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.9) : Color.black.opacity(0.6))
             }
             .contentShape(Rectangle())
             .onTapGesture {
-                onSelect(item.pageIndex)
+                onSelect(item)
             }
             .padding(.leading, 10)
             .padding(.trailing, 10)
             .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.85) : Color.clear)
+            )
 
             if isExpanded {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(item.children) { child in
                         TableOfContentsNodeView(
                             item: child,
-                            currentPageIndex: currentPageIndex,
+                            selectedItemID: selectedItemID,
                             expandedItemIDs: $expandedItemIDs,
                             onSelect: onSelect
                         )
@@ -325,7 +368,7 @@ private struct TableOfContentsNodeView: View {
     }
 
     private var isSelected: Bool {
-        item.pageIndex == currentPageIndex
+        item.id == selectedItemID
     }
 
     private func toggleExpanded() {
