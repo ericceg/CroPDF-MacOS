@@ -7,6 +7,7 @@ final class PDFEditorModel: ObservableObject {
     @Published private(set) var currentFileURL: URL?
     @Published private(set) var currentPageIndex = 0
     @Published private(set) var selectionRect: CGRect?
+    @Published private(set) var selectionPageIndex: Int?
     @Published var isShowingPageJumpSheet = false
     @Published var pageJumpInput = ""
     @Published private(set) var errorMessage: String?
@@ -35,7 +36,7 @@ final class PDFEditorModel: ObservableObject {
     }
 
     var canExport: Bool {
-        document != nil && selectionRect != nil
+        document != nil && selectionRect != nil && selectionPageIndex != nil
     }
 
     var fileDisplayName: String {
@@ -107,6 +108,7 @@ final class PDFEditorModel: ObservableObject {
         self.document = document
         currentFileURL = url
         selectionRect = nil
+        selectionPageIndex = nil
 
         let targetPage = max(0, min((preferredPage ?? 1) - 1, max(document.pageCount - 1, 0)))
         currentPageIndex = targetPage
@@ -135,7 +137,6 @@ final class PDFEditorModel: ObservableObject {
 
         currentPageIndex = clamped
         pageJumpInput = "\(clamped + 1)"
-        selectionRect = nil
     }
 
     func syncCurrentPageFromViewer(_ index: Int) {
@@ -150,15 +151,22 @@ final class PDFEditorModel: ObservableObject {
 
         currentPageIndex = clamped
         pageJumpInput = "\(clamped + 1)"
-        selectionRect = nil
     }
 
-    func setSelectionRect(_ rect: CGRect?) {
-        selectionRect = rect?.standardized
+    func setSelectionRect(_ rect: CGRect?, onPage pageIndex: Int?) {
+        guard let standardized = rect?.standardized, let pageIndex else {
+            selectionRect = nil
+            selectionPageIndex = nil
+            return
+        }
+
+        selectionRect = standardized
+        selectionPageIndex = pageIndex
     }
 
     func clearSelection() {
         selectionRect = nil
+        selectionPageIndex = nil
     }
 
     func presentPageJump() {
@@ -188,7 +196,8 @@ final class PDFEditorModel: ObservableObject {
     func exportSelection() {
         guard
             let document,
-            let page = document.page(at: currentPageIndex),
+            let selectionPageIndex,
+            let page = document.page(at: selectionPageIndex),
             let selectionRect
         else {
             return
@@ -197,7 +206,7 @@ final class PDFEditorModel: ObservableObject {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.canCreateDirectories = true
-        panel.nameFieldStringValue = "cropped_page_\(currentPageIndex + 1).pdf"
+        panel.nameFieldStringValue = "cropped_page_\(selectionPageIndex + 1).pdf"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return

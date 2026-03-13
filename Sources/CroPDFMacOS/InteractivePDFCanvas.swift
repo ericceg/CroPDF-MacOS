@@ -7,9 +7,9 @@ struct InteractivePDFCanvas: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PDFCanvasContainerView {
         let view = PDFCanvasContainerView()
-        view.onSelectionChange = { rect in
+        view.onSelectionChange = { pageIndex, rect in
             Task { @MainActor in
-                model.setSelectionRect(rect)
+                model.setSelectionRect(rect, onPage: pageIndex)
             }
         }
         view.onPageStep = { delta in
@@ -31,7 +31,12 @@ struct InteractivePDFCanvas: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: PDFCanvasContainerView, context: Context) {
-        nsView.update(document: model.document, pageIndex: model.currentPageIndex, selectionRect: model.selectionRect)
+        nsView.update(
+            document: model.document,
+            pageIndex: model.currentPageIndex,
+            selectionRect: model.selectionRect,
+            selectionPageIndex: model.selectionPageIndex
+        )
     }
 }
 
@@ -43,7 +48,7 @@ final class PDFCanvasContainerView: NSView {
     private var magnifyMonitor: Any?
     private var smartMagnifyMonitor: Any?
 
-    var onSelectionChange: ((CGRect?) -> Void)? {
+    var onSelectionChange: ((Int?, CGRect?) -> Void)? {
         didSet { overlayView.onSelectionChange = onSelectionChange }
     }
 
@@ -137,7 +142,7 @@ final class PDFCanvasContainerView: NSView {
         attachOverlayIfNeeded()
     }
 
-    func update(document: PDFDocument?, pageIndex: Int, selectionRect: CGRect?) {
+    func update(document: PDFDocument?, pageIndex: Int, selectionRect: CGRect?, selectionPageIndex: Int?) {
         if pdfView.document !== document {
             pdfView.document = document
             pdfView.refreshZoomBounds()
@@ -153,7 +158,7 @@ final class PDFCanvasContainerView: NSView {
         }
 
         attachOverlayIfNeeded()
-        overlayView.sync(selectionRect: selectionRect)
+        overlayView.sync(selectionRect: selectionRect, pageIndex: selectionPageIndex)
         overlayView.needsDisplay = true
     }
 
@@ -553,21 +558,25 @@ private extension PDFDocument {
 
 final class SelectionOverlayView: NSView {
     weak var pdfView: PDFView?
-    var onSelectionChange: ((CGRect?) -> Void)?
+    var onSelectionChange: ((Int?, CGRect?) -> Void)?
     var onPageStep: ((Int) -> Void)?
     var onClearSelection: (() -> Void)?
 
     private var selectionRectInPage: CGRect?
+    private var selectionPageIndex: Int?
     private var dragAnchor: CGPoint?
     private var isSpaceHeld = false
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { true }
 
-    func sync(selectionRect: CGRect?) {
+    func sync(selectionRect: CGRect?, pageIndex: Int?) {
         let standardized = selectionRect?.standardized
         if selectionRectInPage != standardized {
             selectionRectInPage = standardized
+        }
+        if selectionPageIndex != pageIndex {
+            selectionPageIndex = pageIndex
         }
     }
 
@@ -580,7 +589,8 @@ final class SelectionOverlayView: NSView {
 
         dragAnchor = clamp(point: convert(event.locationInWindow, from: nil), to: pageFrame)
         selectionRectInPage = nil
-        onSelectionChange?(nil)
+        selectionPageIndex = nil
+        onSelectionChange?(nil, nil)
         needsDisplay = true
     }
 
@@ -613,8 +623,9 @@ final class SelectionOverlayView: NSView {
 
         if event.keyCode == 53 {
             selectionRectInPage = nil
+            selectionPageIndex = nil
             onClearSelection?()
-            onSelectionChange?(nil)
+            onSelectionChange?(nil, nil)
             needsDisplay = true
             return true
         }
@@ -662,7 +673,8 @@ final class SelectionOverlayView: NSView {
 
         rect = clamp(selectionRect: rect.standardized, to: pageFrame)
         selectionRectInPage = convertSelectionToPage(rect)
-        onSelectionChange?(selectionRectInPage)
+        selectionPageIndex = editableSelectionPage?.pageIndex(in: pdfView?.document)
+        onSelectionChange?(selectionPageIndex, selectionRectInPage)
         needsDisplay = true
         return true
     }
@@ -717,10 +729,12 @@ final class SelectionOverlayView: NSView {
 
         if finalize, (rect.width < 3 || rect.height < 3) {
             selectionRectInPage = nil
-            onSelectionChange?(nil)
+            selectionPageIndex = nil
+            onSelectionChange?(nil, nil)
         } else {
             selectionRectInPage = convertSelectionToPage(rect)
-            onSelectionChange?(selectionRectInPage)
+            selectionPageIndex = editableSelectionPage?.pageIndex(in: pdfView?.document)
+            onSelectionChange?(selectionPageIndex, selectionRectInPage)
         }
 
         if finalize {
@@ -746,7 +760,7 @@ final class SelectionOverlayView: NSView {
     private var currentPageFrame: CGRect? {
         guard
             let pdfView,
-            let page = pdfView.currentPage,
+            let page = interactionPage,
             let documentView = pdfView.documentView
         else {
             return nil
@@ -759,7 +773,7 @@ final class SelectionOverlayView: NSView {
     private var currentSelectionFrame: CGRect? {
         guard
             let pdfView,
-            let page = pdfView.currentPage,
+            let page = selectionPage(),
             let selectionRectInPage,
             let documentView = pdfView.documentView
         else {
@@ -773,7 +787,7 @@ final class SelectionOverlayView: NSView {
     private func convertSelectionToPage(_ rect: CGRect) -> CGRect? {
         guard
             let pdfView,
-            let page = pdfView.currentPage,
+            let page = editableSelectionPage,
             let documentView = pdfView.documentView
         else {
             return nil
@@ -788,6 +802,28 @@ final class SelectionOverlayView: NSView {
             return nil
         }
         return clipped
+    }
+
+    private var interactionPage: PDFPage? {
+        pdfView?.currentPage
+    }
+
+    private var editableSelectionPage: PDFPage? {
+        selectionPage() ?? interactionPage
+    }
+
+    private func selectionPage() -> PDFPage? {
+        guard
+            let pdfView,
+            let document = pdfView.document,
+            let selectionPageIndex,
+            selectionPageIndex >= 0,
+            selectionPageIndex < document.pageCount
+        else {
+            return nil
+        }
+
+        return document.page(at: selectionPageIndex)
     }
 
     private func convertPageRect(_ rect: CGRect, on page: PDFPage, via documentView: NSView) -> CGRect {
@@ -816,5 +852,16 @@ final class SelectionOverlayView: NSView {
         rect.origin.y = min(max(rect.origin.y, pageFrame.minY), pageFrame.maxY - rect.height)
 
         return rect
+    }
+}
+
+private extension PDFPage {
+    func pageIndex(in document: PDFDocument?) -> Int? {
+        guard let document else {
+            return nil
+        }
+
+        let index = document.index(for: self)
+        return index == NSNotFound ? nil : index
     }
 }
