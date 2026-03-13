@@ -17,7 +17,7 @@ struct CroPDFMacOSApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(model: model)
-                .frame(minWidth: 1040, minHeight: 760)
+                .frame(minWidth: 800, minHeight: 400)
         }
         .defaultSize(width: 1240, height: 860)
         .commands {
