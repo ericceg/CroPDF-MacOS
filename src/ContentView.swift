@@ -312,12 +312,12 @@ private struct TableOfContentsNodeView: View {
                         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.secondary)
-                            .frame(width: 12, height: 12)
+                            .frame(width: 24, height: 24)
                     }
                     .buttonStyle(.plain)
                 } else {
                     Color.clear
-                        .frame(width: 12, height: 12)
+                        .frame(width: 24, height: 24)
                 }
 
                 Text(item.title)
@@ -331,13 +331,14 @@ private struct TableOfContentsNodeView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(isSelected ? Color.white.opacity(0.9) : Color.black.opacity(0.6))
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 10)
+            .padding(.trailing, 10)
+            .padding(.vertical, 8)
             .contentShape(Rectangle())
             .onTapGesture {
                 onSelect(item)
             }
-            .padding(.leading, 10)
-            .padding(.trailing, 10)
-            .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isSelected ? Color.accentColor.opacity(0.85) : Color.clear)
