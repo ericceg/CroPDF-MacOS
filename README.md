@@ -13,9 +13,10 @@ Native macOS rebuild of [CroPDF](https://github.com/ericceg/CroPDF): fast PDF fi
 
 - Open a PDF and browse pages quickly
 - Drag a crop rectangle directly on the current page
-- Use `Cmd + 0` to open a PDF
+- Use `Cmd + O` to open a PDF
 - Use `Cmd + S` to crop and save
 - Use `Cmd + G` to jump to a page
+- Use `←` and `→` to change pages when no selection is active
 - Use arrow keys to move the selection
 - Use `Shift + Arrow` to resize the selection
 - Hold `Space` while using arrows to move or resize in 25-point jumps

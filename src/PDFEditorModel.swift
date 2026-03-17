@@ -148,6 +148,7 @@ final class PDFEditorModel: ObservableObject {
             return
         }
 
+        clearSelection()
         currentPageIndex = clamped
         pageJumpInput = "\(clamped + 1)"
     }
@@ -162,6 +163,7 @@ final class PDFEditorModel: ObservableObject {
             return
         }
 
+        clearSelection()
         currentPageIndex = clamped
         pageJumpInput = "\(clamped + 1)"
     }
