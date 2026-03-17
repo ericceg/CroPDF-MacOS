@@ -1,69 +1,104 @@
-# CroPDF Native
+# CroPDF-MacOS
 
-Native macOS rebuild of [CroPDF](https://github.com/ericceg/CroPDF): fast PDF figure cropping with native rendering, keyboard-precise selection, and vector-preserving export.
+> This repository is the native macOS version of [CroPDF](https://github.com/ericceg/CroPDF), rebuilt as a SwiftUI/AppKit desktop app while keeping the same core goal: fast, lossless PDF figure cropping.
 
-## What changed from the original
+[![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey.svg)]()
+[![Swift 6.2+](https://img.shields.io/badge/Swift-6.2+-orange.svg)](https://swift.org)
 
-- SwiftUI + AppKit shell instead of Tkinter
-- PDFKit rendering for a more responsive native page viewer
-- Quartz-based PDF export that keeps the cropped result in PDF/vector form
-- Glass-forward macOS interface with translucent controls and ambient lighting
+<p align="center">
+   <img src="assets/CroPDF.svg" alt="CroPDF" width="250">
+</p>
+
+**Lightweight PDF cropper that keeps vector quality.** Extract figures from textbooks for Typst, LaTeX, or any other document.
+
+## Why I Made This
+
+I write my math notes in [Typst](https://typst.app) and often want to include figures from textbooks (which I have as PDFs). To preserve the best possible quality (sharp text, scalable diagrams, no compression artifacts) I need to **crop the original PDF and keep it in PDF format**.
+
+Yes, some PDF viewers can do this. But I wanted something:
+- **Lightweight** — no bloated software, just a simple tool
+- **Fast** — open, crop, save, done
+- **Lossless** — true vector output, not a rasterized screenshot
+
+So I built CroPDF-MacOS: a macOS-native rebuild of [CroPDF](https://github.com/ericceg/CroPDF) in Swift, using PDFKit and Quartz, focused on doing one thing well.
 
 ## Features
 
-- Open a PDF and browse pages quickly
-- Drag a crop rectangle directly on the current page
-- Use `Cmd + O` to open a PDF
-- Use `Cmd + S` to crop and save
-- Use `Cmd + G` to jump to a page
-- Use `←` and `→` to change pages when no selection is active
-- Use arrow keys to move the selection
-- Use `Shift + Arrow` to resize the selection
-- Hold `Space` while using arrows to move or resize in 25-point jumps
-- Press `Escape` to clear the selection
-- Save the crop as a new PDF without rasterizing it
+- 📄 **Vector-quality output** — crops PDFs without rasterization
+- 🖱️ **Visual selection** — draw a rectangle to define the crop area
+- ⌨️ **Pixel-perfect adjustment** — fine-tune with arrow keys
+- 📖 **Page navigation** — browse multi-page PDFs easily
+- 🧭 **Outline + thumbnail sidebar** — jump through long PDFs faster
+- 🍎 **Native macOS app** — SwiftUI/AppKit UI with PDFKit rendering
+- 🪶 **Minimal footprint** — no Python runtime or third-party app framework
 
-## Build
+## Installation
+
+
+### Quick Install (recommended)
+
+Download the latest DMG from [GitHub Releases](https://github.com/ericceg/CroPDF-MacOS/releases), open it, and move `CroPDF.app` into your `Applications` folder.
+
+### From Source
 
 ```bash
+git clone https://github.com/ericceg/CroPDF-MacOS.git
+cd CroPDF-MacOS
 swift build
 ```
 
-## Run
+You can open the package directly in Xcode and run it as a native macOS app.
 
-```bash
-swift run CroPDFMacOS
-```
-
-Optional launch arguments:
-
-```bash
-swift run CroPDFMacOS /path/to/file.pdf --page 12
-```
-
-You can also open the package directly in Xcode and run it as a macOS app target.
-
-## Package As .app
-
-There is no dedicated `.app` packaging command anymore. The supported packaging output is the DMG.
-
-## Package As .dmg
+### Build a DMG
 
 ```bash
 make dmg
 ```
 
-This builds a temporary app bundle, packages it with `create-dmg`, and leaves you with `dist/CroPDF.dmg`. The intermediate `dist/CroPDF.app` is removed automatically.
+This creates `dist/CroPDF.dmg`.
 
-`Node.js` and `npm` are required for the DMG step because the script downloads `create-dmg` on demand.
+**Note:** `Node.js` and `npm` are required for the DMG step because the build uses `create-dmg` via `npx`.
 
-## Releases
+## Usage
 
-GitHub releases are created by pushing a tag that matches `v*.*.*`, for example:
+1. Launch the app
+2. Navigate to the page with the figure you want
+3. **Click and drag** to draw a crop rectangle
+4. Fine-tune the selection:
+   - **Arrow keys** — move the rectangle (1pt)
+   - **Shift + Arrow** — resize the rectangle
+   - **Space + Arrow** — move/resize by 25pt
+5. Click **Crop and Save** → choose output location
 
-```bash
-git tag v1.2.4
-git push origin v1.2.4
-```
+The output is a proper PDF — scalable, searchable, perfect for embedding.
 
-That workflow is the only CI path that builds a DMG. It publishes the release and uploads a versioned asset such as `CroPDF-v1.2.4.dmg`.
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `⌘O` | Open PDF file |
+| `⌘S` | Crop and save |
+| `⌘G` | Go to page |
+| `←` `→` | Navigate pages (when no selection) |
+| `Arrow keys` | Move selection (1pt) |
+| `Shift + Arrow` | Resize selection |
+| `Space + Arrow` | Move/resize by 25pt |
+| `Escape` | Deselect area |
+
+## Use Cases
+
+- 📚 Extract figures from textbooks for your notes
+- 📝 Include diagrams in Typst/LaTeX documents
+- 🎓 Crop theorems or examples for presentations
+- 📊 Pull charts from papers for slides
+
+## Requirements
+
+- macOS 14+
+- Swift 6.2+ (for building from source)
+
+If you use the packaged app from Releases, no separate runtime is required.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
