@@ -44,16 +44,14 @@ You can also open the package directly in Xcode and run it as a macOS app target
 
 ## Package As .app
 
-```bash
-./scripts/build_app.sh
-```
-
-This produces `dist/CroPDF.app` with a bundle `Info.plist` and `CroPDF.icns`, so Finder and the Dock use the app icon from `assets/CroPDF.svg`.
+There is no dedicated `.app` packaging command anymore. The supported packaging output is the DMG.
 
 ## Package As .dmg
 
 ```bash
-./scripts/build_dmg.sh
+make dmg
 ```
 
-This builds `dist/CroPDF.app`, stages it alongside an `Applications` shortcut, and creates `dist/CroPDF.dmg`.
+This builds a temporary app bundle, packages it with `create-dmg`, and leaves you with `dist/CroPDF.dmg`. The intermediate `dist/CroPDF.app` is removed automatically.
+
+`Node.js` and `npm` are required for the DMG step because the script downloads `create-dmg` on demand.
