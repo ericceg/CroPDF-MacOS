@@ -18,10 +18,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Set up Swift
+        uses: swift-actions/setup-swift@v3
+        with:
+          swift-version: "6.2"
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: Print Swift version
+        run: swift --version
 
       - name: Build DMG
         run: make dmg
