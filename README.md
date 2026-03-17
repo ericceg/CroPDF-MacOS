@@ -41,3 +41,17 @@ swift run CroPDFMacOS /path/to/file.pdf --page 12
 ```
 
 You can also open the package directly in Xcode and run it as a macOS app target.
+
+## Package As .app
+
+There is no dedicated `.app` packaging command anymore. The supported packaging output is the DMG.
+
+## Package As .dmg
+
+```bash
+make dmg
+```
+
+This builds a temporary app bundle, packages it with `create-dmg`, and leaves you with `dist/CroPDF.dmg`. The intermediate `dist/CroPDF.app` is removed automatically.
+
+`Node.js` and `npm` are required for the DMG step because the script downloads `create-dmg` on demand.

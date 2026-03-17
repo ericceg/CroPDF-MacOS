@@ -3,9 +3,29 @@ import SwiftUI
 
 final class CroPDFAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if let iconImage = appIconImage() {
+            NSApp.applicationIconImage = iconImage
+        }
+
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         NSApp.windows.first?.makeKeyAndOrderFront(nil)
+    }
+
+    private func appIconImage() -> NSImage? {
+        let candidates = [
+            ("CroPDF", "icns"),
+            ("CroPDFIcon", "png"),
+        ]
+
+        for (name, ext) in candidates {
+            if let iconURL = Bundle.module.url(forResource: name, withExtension: ext),
+               let iconImage = NSImage(contentsOf: iconURL) {
+                return iconImage
+            }
+        }
+
+        return nil
     }
 }
 
