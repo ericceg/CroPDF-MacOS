@@ -8,6 +8,7 @@ MACOS_DIR := $(CONTENTS_DIR)/MacOS
 RESOURCES_DIR := $(CONTENTS_DIR)/Resources
 DMG_PATH := $(DIST_DIR)/$(APP_NAME).dmg
 CREATE_DMG_VERSION ?= 8.0.0
+APP_SIGN_IDENTITY ?= -
 
 .PHONY: dmg clean
 
@@ -21,6 +22,8 @@ dmg:
 	cp -R "$$BIN_DIR/$(EXECUTABLE)_$(EXECUTABLE).bundle" "$(RESOURCES_DIR)/$(EXECUTABLE)_$(EXECUTABLE).bundle"; \
 	cp "$(CURDIR)/src/Resources/$(APP_NAME).icns" "$(RESOURCES_DIR)/$(APP_NAME).icns"; \
 	cp "$(CURDIR)/scripts/Info.plist" "$(CONTENTS_DIR)/Info.plist"; \
+	codesign --force --deep --sign "$(APP_SIGN_IDENTITY)" "$(APP_DIR)"; \
+	codesign --verify --deep --strict --verbose=2 "$(APP_DIR)"; \
 	rm -f "$(DMG_PATH)"; \
 	npx --yes "create-dmg@$(CREATE_DMG_VERSION)" --overwrite --no-version-in-filename --no-code-sign "$(APP_DIR)" "$(DIST_DIR)"; \
 	rm -rf "$(APP_DIR)"; \
