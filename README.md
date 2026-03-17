@@ -55,3 +55,14 @@ make dmg
 This builds a temporary app bundle, packages it with `create-dmg`, and leaves you with `dist/CroPDF.dmg`. The intermediate `dist/CroPDF.app` is removed automatically.
 
 `Node.js` and `npm` are required for the DMG step because the script downloads `create-dmg` on demand.
+
+## Releases
+
+GitHub releases are created by pushing a tag that matches `v*.*.*`, for example:
+
+```bash
+git tag v1.2.4
+git push origin v1.2.4
+```
+
+That workflow is the only CI path that builds a DMG. It publishes the release and uploads a versioned asset such as `CroPDF-v1.2.4.dmg`.
