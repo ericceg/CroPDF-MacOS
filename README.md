@@ -4,6 +4,8 @@
 
 [![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey.svg)]()
 [![Swift 6.2+](https://img.shields.io/badge/Swift-6.2+-orange.svg)](https://swift.org)
+[![version](https://img.shields.io/badge/version-v1.0.0-9ACD32.svg)](https://github.com/ericceg/CroPDF-MacOS/releases/tag/v1.0.0)
+[![license](https://img.shields.io/badge/license-MIT-1E90FF.svg)](LICENSE)
 
 <p align="center">
    <img src="assets/CroPDF.svg" alt="CroPDF" width="250">
