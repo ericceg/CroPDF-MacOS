@@ -41,3 +41,19 @@ swift run CroPDFMacOS /path/to/file.pdf --page 12
 ```
 
 You can also open the package directly in Xcode and run it as a macOS app target.
+
+## Package As .app
+
+```bash
+./scripts/build_app.sh
+```
+
+This produces `dist/CroPDF.app` with a bundle `Info.plist` and `CroPDF.icns`, so Finder and the Dock use the app icon from `assets/CroPDF.svg`.
+
+## Package As .dmg
+
+```bash
+./scripts/build_dmg.sh
+```
+
+This builds `dist/CroPDF.app`, stages it alongside an `Applications` shortcut, and creates `dist/CroPDF.dmg`.

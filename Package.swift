@@ -9,7 +9,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "CroPDFMacOS",
-            path: "src"
+            path: "src",
+            resources: [
+                .process("Resources"),
+            ]
         ),
     ]
 )
